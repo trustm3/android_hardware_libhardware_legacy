@@ -18,6 +18,7 @@
 #define __NAN_H__
 
 #include <net/if.h>
+#include <stdbool.h>
 #include "wifi_hal.h"
 
 #ifdef __cplusplus
@@ -60,6 +61,10 @@ typedef u32 NanDataPathId;
 #define NAN_ERROR_STR_LEN                       255
 #define NAN_PMK_INFO_LEN                        32
 #define NAN_MAX_SCID_BUF_LEN                    1024
+#define NAN_MAX_SDEA_SERVICE_SPECIFIC_INFO_LEN  1024
+#define NAN_SECURITY_MIN_PASSPHRASE_LEN         8
+#define NAN_SECURITY_MAX_PASSPHRASE_LEN         63
+
 
 /*
   Definition of various NanResponseType
@@ -232,13 +237,63 @@ typedef enum {
     NAN_DP_FORCE_CHANNEL_SETUP
 } NanDataPathChannelCfg;
 
-/* NAN Ranging Auto response configuration */
+/* Enable/Disable NAN Ranging Auto response */
 typedef enum {
-    NAN_RANGING_AUTO_RESPONSE_ENABLE = 0,
+    NAN_RANGING_AUTO_RESPONSE_ENABLE = 1,
     NAN_RANGING_AUTO_RESPONSE_DISABLE
-} NanRangingAutoResponseCfg;
+} NanRangingAutoResponse;
+
+/* Enable/Disable NAN service range report */
+typedef enum {
+    NAN_DISABLE_RANGE_REPORT = 1,
+    NAN_ENABLE_RANGE_REPORT
+} NanRangeReport;
+
+/* NAN Range Response */
+typedef enum {
+    NAN_RANGE_REQUEST_ACCEPT = 1,
+    NAN_RANGE_REQUEST_REJECT,
+    NAN_RANGE_REQUEST_CANCEL
+} NanRangeResponse;
+
+/* NAN Security Key Input Type*/
+typedef enum {
+    NAN_SECURITY_KEY_INPUT_PMK = 1,
+    NAN_SECURITY_KEY_INPUT_PASSPHRASE
+} NanSecurityKeyInputType;
+
+typedef struct {
+    /* pmk length */
+    u32 pmk_len;
+    /*
+       PMK: Info is optional in Discovery phase.
+       PMK info can be passed during
+       the NDP session.
+     */
+    u8 pmk[NAN_PMK_INFO_LEN];
+} NanSecurityPmk;
+
+typedef struct {
+    /* passphrase length */
+    u32 passphrase_len;
+    /*
+       passphrase info is optional in Discovery phase.
+       passphrase info can be passed during
+       the NDP session.
+     */
+    u8 passphrase[NAN_SECURITY_MAX_PASSPHRASE_LEN];
+} NanSecurityPassPhrase;
+
+typedef struct {
+    NanSecurityKeyInputType key_type;
+    union {
+        NanSecurityPmk pmk_info;
+        NanSecurityPassPhrase passphrase_info;
+    } body;
+} NanSecurityKeyInfo;
 
 /* NAN Shared Key Security Cipher Suites Mask */
+#define NAN_CIPHER_SUITE_SHARED_KEY_NONE 0x00
 #define NAN_CIPHER_SUITE_SHARED_KEY_128_MASK  0x01
 #define NAN_CIPHER_SUITE_SHARED_KEY_256_MASK  0x02
 
@@ -270,10 +325,15 @@ typedef struct {
        if ranging is enabled on disabled
     */
     NanRangingState ranging_state;
+    /*
+      Enable/Disable Ranging report,
+      when configured NanRangeReportInd received
+    */
+    NanRangeReport range_report;
 } NanSdeaCtrlParams;
 
 /*
-   Nan Ranging Result indicating structure
+   Nan Ranging Peer Info in MatchInd
 */
 typedef struct {
     /*
@@ -283,7 +343,7 @@ typedef struct {
     u32 range_measurement_cm;
     /* Ranging event matching the configuration of continuous/ingress/egress. */
     u32 ranging_event_type;
-} NanRangeResult;
+} NanRangeInfo;
 
 /* Nan/NDP Capabilites info */
 typedef struct {
@@ -300,7 +360,12 @@ typedef struct {
     u32 max_ndp_sessions;
     u32 max_app_info_len;
     u32 max_queued_transmit_followup_msgs;
+    u32 ndp_supported_bands;
     u32 cipher_suites_supported;
+    u32 max_scid_len;
+    bool is_ndp_security_supported;
+    u32 max_sdea_service_specific_info_len;
+    u32 max_subscribe_address;
 } NanCapabilities;
 
 /*
@@ -309,8 +374,8 @@ typedef struct {
   will send ACCEPT/REJECT
 */
 typedef enum {
-    /* Default value */
     NAN_SERVICE_ACCEPT_POLICY_NONE = 0,
+    /* Default value */
     NAN_SERVICE_ACCEPT_POLICY_ALL
 } NanServiceAcceptPolicy;
 
@@ -396,14 +461,14 @@ typedef struct {
        NanChannelIndex corresponds to the respective channel
        If time set to 0 then the FW default time will be used.
     */
-    u8 dwell_time[NAN_MAX_SOCIAL_CHANNELS];
+    u8 dwell_time[NAN_MAX_SOCIAL_CHANNELS]; // default value 200 msec
 
     /*
        Scan period of each social channel in seconds
        NanChannelIndex corresponds to the respective channel
        If time set to 0 then the FW default time will be used.
     */
-    u16 scan_period[NAN_MAX_SOCIAL_CHANNELS];
+    u16 scan_period[NAN_MAX_SOCIAL_CHANNELS]; // default value 20 sec
 } NanSocialChannelScanParams;
 
 /*
@@ -573,6 +638,21 @@ typedef struct {
     u32 distance_egress_cm;
 } NanRangingCfg;
 
+/* NAN Ranging request's response */
+typedef struct {
+    /* Publish Id of an earlier Publisher */
+    u16 publish_id;
+    /*
+       A 32 bit Requestor instance Id which is sent to the Application.
+       This Id will be used in subsequent RangeResponse on Subscribe side.
+    */
+    u32 requestor_instance_id;
+    /* Peer MAC addr of Range Requestor */
+    u8 peer_addr[NAN_MAC_ADDR_LEN];
+    /* Response indicating ACCEPT/REJECT/CANCEL of Range Request */
+    NanRangeResponse ranging_response;
+} NanRangeResponseCfg;
+
 /* Structure of Post NAN Discovery attribute */
 typedef struct {
     /* Connection type of the host */
@@ -693,7 +773,7 @@ typedef struct {
        The SDF includes in OTA when enabled. The publish/subscribe period
        values don't override the device level configurations.
     */
-    u32 dw_2dot4g_interval_val;
+    u32 dw_2dot4g_interval_val; // default value 1
     /* Configure 5GHz DW Band */
     u8 config_5g_dw_band;
     /*
@@ -702,7 +782,7 @@ typedef struct {
        any interval. The SDF includes in OTA when enabled. The publish/subscribe
        period values don't override the device level configurations.
     */
-    u32 dw_5g_interval_val;
+    u32 dw_5g_interval_val; // default value 1 when 5G is enabled
 } NanConfigDW;
 
 /*
@@ -711,14 +791,14 @@ typedef struct {
 */
 typedef struct {
     /* Mandatory parameters below */
-    u8 master_pref;
+    u8 master_pref; // default value 0x02
     /*
       A cluster_low value matching cluster_high indicates a request to join
       a cluster with that value. If the requested cluster is not found the
       device will start its own cluster.
     */
-    u16 cluster_low;
-    u16 cluster_high;
+    u16 cluster_low; // default value 0
+    u16 cluster_high; // default value 0xFFFF
 
     /*
       Optional configuration of Enable request.
@@ -726,7 +806,7 @@ typedef struct {
       determine whether configuration is to be passed or not.
     */
     u8 config_support_5g;
-    u8 support_5g_val;
+    u8 support_5g_val; // default value 0; turned off by default
     /*
        BIT 0 is used to specify to include Service IDs in Sync/Discovery beacons
        0 - Do not include SIDs in any beacons
@@ -736,22 +816,22 @@ typedef struct {
        the maximum allow Beacon frame size
     */
     u8 config_sid_beacon;
-    u8 sid_beacon_val;
+    u8 sid_beacon_val; // default value 0x01
     /*
        The rssi values below should be specified without sign.
        For eg: -70dBm should be specified as 70.
     */
     u8 config_2dot4g_rssi_close;
-    u8 rssi_close_2dot4g_val;
+    u8 rssi_close_2dot4g_val;    // default value -60 dBm
 
     u8 config_2dot4g_rssi_middle;
-    u8 rssi_middle_2dot4g_val;
+    u8 rssi_middle_2dot4g_val;    // default value -70 dBm
 
     u8 config_2dot4g_rssi_proximity;
-    u8 rssi_proximity_2dot4g_val;
+    u8 rssi_proximity_2dot4g_val;//  default value -60dBm
 
     u8 config_hop_count_limit;
-    u8 hop_count_limit_val;
+    u8 hop_count_limit_val; //  default value 0x02
 
     /*
        Defines 2.4G channel access support
@@ -759,35 +839,35 @@ typedef struct {
        1 - Supported
     */
     u8 config_2dot4g_support;
-    u8 support_2dot4g_val;
+    u8 support_2dot4g_val; // default value 0x01
     /*
        Defines 2.4G channels will be used for sync/discovery beacons
        0 - 2.4G channels not used for beacons
        1 - 2.4G channels used for beacons
     */
     u8 config_2dot4g_beacons;
-    u8 beacon_2dot4g_val;
+    u8 beacon_2dot4g_val; // default value 1
     /*
        Defines 2.4G channels will be used for Service Discovery frames
        0 - 2.4G channels not used for Service Discovery frames
        1 - 2.4G channels used for Service Discovery frames
     */
     u8 config_2dot4g_sdf;
-    u8 sdf_2dot4g_val;
+    u8 sdf_2dot4g_val; // default value 1
     /*
        Defines 5G channels will be used for sync/discovery beacons
        0 - 5G channels not used for beacons
        1 - 5G channels used for beacons
     */
     u8 config_5g_beacons;
-    u8 beacon_5g_val;
+    u8 beacon_5g_val; // default value 1 when 5G is enabled
     /*
        Defines 5G channels will be used for Service Discovery frames
        0 - 5G channels not used for Service Discovery frames
        1 - 5G channels used for Service Discovery frames
     */
     u8 config_5g_sdf;
-    u8 sdf_5g_val;
+    u8 sdf_5g_val; // default value is 0 when 5G is enabled
     /*
        1 byte value which defines the RSSI in
        dBm for a close by Peer in 5 Ghz channels.
@@ -795,16 +875,15 @@ typedef struct {
        For eg: -70dBm should be specified as 70.
     */
     u8 config_5g_rssi_close;
-    u8 rssi_close_5g_val;
+    u8 rssi_close_5g_val; // default value -60dBm when 5G is enabled
     /*
        1 byte value which defines the RSSI value in
        dBm for a close by Peer in 5 Ghz channels.
        The rssi values should be specified without sign.
        For eg: -70dBm should be specified as 70.
-
     */
     u8 config_5g_rssi_middle;
-    u8 rssi_middle_5g_val;
+    u8 rssi_middle_5g_val; // default value -75dBm when 5G is enabled
     /*
        1 byte value which defines the RSSI filter
        threshold.  Any Service Descriptors received above this
@@ -813,18 +892,18 @@ typedef struct {
        For eg: -70dBm should be specified as 70.
     */
     u8 config_5g_rssi_close_proximity;
-    u8 rssi_close_proximity_5g_val;
+    u8 rssi_close_proximity_5g_val; // default value -60dBm when 5G is enabled
     /*
        1 byte quantity which defines the window size over
        which the “average RSSI” will be calculated over.
     */
     u8 config_rssi_window_size;
-    u8 rssi_window_size_val;
+    u8 rssi_window_size_val; // default value 0x08
     /*
        The 24 bit Organizationally Unique ID + the 8 bit Network Id.
     */
     u8 config_oui;
-    u32 oui_val;
+    u32 oui_val; // default value {0x51, 0x6F, 0x9A, 0x01, 0x00, 0x00}
     /*
        NAN Interface Address, If not configured the Discovery Engine
        will generate a 6 byte Random MAC.
@@ -850,22 +929,22 @@ typedef struct {
        value for all transmitted Sync/Discovery beacons
     */
     u8 config_random_factor_force;
-    u8 random_factor_force_val;
+    u8 random_factor_force_val; // default value off and set to 0x00
     /*
        1 byte quantity which forces the HC for all transmitted Sync and
        Discovery Beacon NO matter the real HC being received over the
        air.
     */
     u8 config_hop_count_force;
-    u8 hop_count_force_val;
+    u8 hop_count_force_val; // default value 0x00
 
     /* channel frequency in MHz to enable Nan on */
     u8 config_24g_channel;
-    wifi_channel channel_24g_val;
+    wifi_channel channel_24g_val; // default value channel 0x6
 
     u8 config_5g_channel;
-    wifi_channel channel_5g_val;
-
+    wifi_channel channel_5g_val; // default value channel 44 or 149 regulatory
+                                 // domain
     /* Configure 2.4/5GHz DW */
     NanConfigDW config_dw;
 
@@ -875,11 +954,7 @@ typedef struct {
        The value 0 is used to disable MAC addr randomization.
     */
     u8 config_disc_mac_addr_randomization;
-    u32 disc_mac_addr_rand_interval_sec;
-
-    /* Enable NAN device Ranging response mode */
-    u8 config_responder_auto_response;
-    NanRangingAutoResponseCfg ranging_auto_response_cfg;
+    u32 disc_mac_addr_rand_interval_sec; // default value 1800 sec
 
     /*
       Set/Enable corresponding bits to disable Discovery indications:
@@ -887,7 +962,17 @@ typedef struct {
       BIT1 - Disable Started Cluster Event.
       BIT2 - Disable Joined Cluster Event.
     */
-    u8 discovery_indication_cfg;
+    u8 discovery_indication_cfg;  // default value 0x0
+    /*
+       BIT 0 is used to specify to include Service IDs in Sync/Discovery beacons
+       0 - Do not include SIDs in any beacons
+       1 - Include SIDs in all beacons.
+       Rest 7 bits are count field which allows control over the number of SIDs
+       included in the Beacon.  0 means to include as many SIDs that fit into
+       the maximum allow Beacon frame size
+    */
+    u8 config_subscribe_sid_beacon;
+    u32 subscribe_sid_beacon_val; // default value 0x0
 } NanEnableRequest;
 
 /*
@@ -972,6 +1057,7 @@ typedef struct {
       BIT0 - Disable publish termination indication.
       BIT1 - Disable match expired indication.
       BIT2 - Disable followUp indication received (OTA).
+      BIT3 - Disable publishReplied indication.
     */
     u8 recv_indication_cfg;
     /*
@@ -980,13 +1066,12 @@ typedef struct {
     NanServiceAcceptPolicy service_responder_policy;
     /* NAN Cipher Suite Type */
     u32 cipher_type;
-    /* pmk length */
-    u8 pmk_len;
     /*
-       PMK: Info is optional in Discovery phase. PMK info can be passed during
+       Nan Security Key Info is optional in Discovery phase.
+       PMK or passphrase info can be passed during
        the NDP session.
-     */
-    u8 pmk[NAN_PMK_INFO_LEN];
+    */
+    NanSecurityKeyInfo key_info;
 
     /* Security Context Identifiers length */
     u32 scid_len;
@@ -1005,6 +1090,22 @@ typedef struct {
 
     /* NAN Ranging configuration */
     NanRangingCfg ranging_cfg;
+
+    /* Enable/disable NAN serivce Ranging auto response mode */
+    NanRangingAutoResponse ranging_auto_response;
+
+    /*
+      When the ranging_auto_response_cfg is not set, NanRangeRequestInd is
+      received. Nan Range Response to Peer MAC Addr is notified to indicate
+      ACCEPT/REJECT/CANCEL to the requestor.
+    */
+    NanRangeResponseCfg range_response_cfg;
+
+    /*
+       Sequence of values indicating the service specific info in SDEA
+    */
+    u16 sdea_service_specific_info_len;
+    u8 sdea_service_specific_info[NAN_MAX_SDEA_SERVICE_SPECIFIC_INFO_LEN];
 } NanPublishRequest;
 
 /*
@@ -1128,13 +1229,12 @@ typedef struct {
 
     /* NAN Cipher Suite Type */
     u32 cipher_type;
-    /* pmk length */
-    u8 pmk_len;
     /*
-       PMK: Info is optional in Discovery phase. PMK info can be passed during
+       Nan Security Key Info is optional in Discovery phase.
+       PMK or passphrase info can be passed during
        the NDP session.
     */
-    u8 pmk[NAN_PMK_INFO_LEN];
+    NanSecurityKeyInfo key_info;
 
     /* Security Context Identifiers length */
     u32 scid_len;
@@ -1153,6 +1253,22 @@ typedef struct {
 
     /* NAN Ranging configuration */
     NanRangingCfg ranging_cfg;
+
+    /* Enable/disable NAN serivce Ranging auto response mode */
+    NanRangingAutoResponse ranging_auto_response;
+
+    /*
+      When the ranging_auto_response_cfg is not set, NanRangeRequestInd is
+      received. Nan Range Response to Peer MAC Addr is notified to indicate
+      ACCEPT/REJECT/CANCEL to the requestor.
+    */
+    NanRangeResponseCfg range_response_cfg;
+
+    /*
+       Sequence of values indicating the service specific info in SDEA
+    */
+    u16 sdea_service_specific_info_len;
+    u8 sdea_service_specific_info[NAN_MAX_SDEA_SERVICE_SPECIFIC_INFO_LEN];
 } NanSubscribeRequest;
 
 /*
@@ -1192,6 +1308,12 @@ typedef struct {
       BIT0 - Disable followUp response from FW.
     */
     u8 recv_indication_cfg;
+
+    /*
+       Sequence of values indicating the service specific info in SDEA
+    */
+    u16 sdea_service_specific_info_len;
+    u8 sdea_service_specific_info[NAN_MAX_SDEA_SERVICE_SPECIFIC_INFO_LEN];
 } NanTransmitFollowupRequest;
 
 /*
@@ -1213,9 +1335,9 @@ typedef struct {
     u8 config_sid_beacon;
     u8 sid_beacon;
     u8 config_rssi_proximity;
-    u8 rssi_proximity;
+    u8 rssi_proximity; // default value -60dBm
     u8 config_master_pref;
-    u8 master_pref;
+    u8 master_pref; // default value 0x02
     /*
        1 byte value which defines the RSSI filter threshold.
        Any Service Descriptors received above this value
@@ -1224,18 +1346,18 @@ typedef struct {
        For eg: -70dBm should be specified as 70.
     */
     u8 config_5g_rssi_close_proximity;
-    u8 rssi_close_proximity_5g_val;
+    u8 rssi_close_proximity_5g_val;  // default value -60dBm
     /*
       Optional configuration of Configure request.
       Each of the optional parameters have configure flag which
       determine whether configuration is to be passed or not.
     */
     /*
-       2 byte quantity which defines the window size over
+       1 byte quantity which defines the window size over
        which the “average RSSI” will be calculated over.
     */
     u8 config_rssi_window_size;
-    u16 rssi_window_size_val;
+    u8 rssi_window_size_val; // default value 0x08
     /*
        If set to 1, the Discovery Engine will enclose the Cluster
        Attribute only sent in Beacons in a Vendor Specific Attribute
@@ -1255,14 +1377,14 @@ typedef struct {
        value for all transmitted Sync/Discovery beacons
     */
     u8 config_random_factor_force;
-    u8 random_factor_force_val;
+    u8 random_factor_force_val; // default value 0x00
     /*
        1 byte quantity which forces the HC for all transmitted Sync and
        Discovery Beacon NO matter the real HC being received over the
        air.
     */
     u8 config_hop_count_force;
-    u8 hop_count_force_val;
+    u8 hop_count_force_val; // default value of 0
     /* NAN Post Connectivity Capability */
     u8 config_conn_capability;
     NanTransmitPostConnectivityCapability conn_capability_val;
@@ -1280,10 +1402,7 @@ typedef struct {
        The value 0 is used to disable MAC addr randomization.
     */
     u8 config_disc_mac_addr_randomization;
-    u32 disc_mac_addr_rand_interval_sec;
-    /* Config NAN device Ranging response mode */
-    u8 config_responder_auto_response;
-    NanRangingAutoResponseCfg ranging_auto_response_cfg;
+    u32 disc_mac_addr_rand_interval_sec; // default value of 30 minutes
 
     /*
       Set/Enable corresponding bits to disable Discovery indications:
@@ -1291,7 +1410,17 @@ typedef struct {
       BIT1 - Disable Started Cluster Event.
       BIT2 - Disable Joined Cluster Event.
     */
-    u8 discovery_indication_cfg;
+    u8 discovery_indication_cfg; // default value of 0
+    /*
+       BIT 0 is used to specify to include Service IDs in Sync/Discovery beacons
+       0 - Do not include SIDs in any beacons
+       1 - Include SIDs in all beacons.
+       Rest 7 bits are count field which allows control over the number of SIDs
+       included in the Beacon.  0 means to include as many SIDs that fit into
+       the maximum allow Beacon frame size
+    */
+    u8 config_subscribe_sid_beacon;
+    u32 subscribe_sid_beacon_val; // default value 0x0
 } NanConfigRequest;
 
 /*
@@ -1482,6 +1611,7 @@ typedef struct
     u32 discBeaconTxFailures;
     u32 amHopCountExpireCount;
     u32 ndpChannelFreq;
+    u32 ndpChannelFreq2;
 } NanSyncStats;
 
 /* NAN Misc DE Statistics */
@@ -1553,7 +1683,6 @@ typedef struct {
 typedef struct {
     NanStatusType status; /* contains the result code */
     char nan_error[NAN_ERROR_STR_LEN]; /* Describe the NAN error type */
-    u32 value; /* Deprecated - do not use */
     NanResponseType response_type; /* NanResponseType Definitions */
     union {
         NanPublishResponse publish_response;
@@ -1563,6 +1692,27 @@ typedef struct {
         NanCapabilities nan_capabilities;
     } body;
 } NanResponseMsg;
+
+/*
+  Publish Replied Indication
+  The PublishRepliedInd Message is sent by the DE when an Active Subscribe is
+  received over the air and it matches a Solicited PublishServiceReq which had
+  been created with the replied_event_flag set.
+*/
+typedef struct {
+    /*
+       A 32 bit Requestor Instance Id which is sent to the Application.
+       This Id will be sent in any subsequent UnmatchInd/FollowupInd
+       messages
+    */
+    u32 requestor_instance_id;
+    u8 addr[NAN_MAC_ADDR_LEN];
+    /*
+       If RSSI filtering was configured in NanPublishRequest then this
+       field will contain the received RSSI value. 0 if not
+    */
+    u8 rssi_value;
+} NanPublishRepliedInd;
 
 /*
   Publish Terminated
@@ -1691,12 +1841,18 @@ typedef struct {
          priority is given to the device DW intervalsi.
     */
     /*
-      Range Result includes:
+      Range Info includes:
       1) distance to the NAN device with the MAC address indicated
          with ranged mac address.
       2) Ranging event matching the configuration of continuous/ingress/egress.
     */
-    NanRangeResult range_result;
+    NanRangeInfo range_info;
+
+    /*
+       Sequence of values indicating the service specific info in SDEA
+    */
+    u16 sdea_service_specific_info_len;
+    u8 sdea_service_specific_info[NAN_MAX_SDEA_SERVICE_SPECIFIC_INFO_LEN];
 } NanMatchInd;
 
 /*
@@ -1756,6 +1912,12 @@ typedef struct {
     */
     u16 service_specific_info_len;
     u8 service_specific_info[NAN_MAX_SERVICE_SPECIFIC_INFO_LEN];
+
+    /*
+       Sequence of values indicating the service specific info in SDEA
+    */
+    u16 sdea_service_specific_info_len;
+    u8 sdea_service_specific_info[NAN_MAX_SDEA_SERVICE_SPECIFIC_INFO_LEN];
 } NanFollowupInd;
 
 /*
@@ -1875,8 +2037,9 @@ typedef struct {
    transaction_id id;
    /*
      Following reason codes returned:
+     NAN_STATUS_SUCCESS
      NAN_STATUS_NO_OTA_ACK
-     NAN_STATUS_FOLLOWUP_QUEUE_FULL
+     NAN_STATUS_PROTOCOL_FAILURE
    */
    NanStatusType reason;
    char nan_reason[NAN_ERROR_STR_LEN]; /* Describe the NAN reason type */
@@ -1931,13 +2094,22 @@ typedef struct {
     NanDataPathCfg ndp_cfg;
     /* App/Service information of the Initiator */
     NanDataPathAppInfo app_info;
-
     /* NAN Cipher Suite Type */
     u32 cipher_type;
-    /* pmk length */
-    u8 pmk_len;
-    /* PMK */
-    u8 pmk[NAN_PMK_INFO_LEN];
+    /*
+       Nan Security Key Info is optional in Discovery phase.
+       PMK or passphrase info can be passed during
+       the NDP session.
+    */
+    NanSecurityKeyInfo key_info;
+    /* length of service name */
+    u32 service_name_len;
+    /*
+       UTF-8 encoded string identifying the service name.
+       The service name field is only used if a Nan discovery
+       is not associated with the NDP (out-of-band discovery).
+    */
+    u8 service_name[NAN_MAX_SERVICE_NAME_LEN];
 } NanDataPathInitiatorRequest;
 
 /*
@@ -1962,13 +2134,22 @@ typedef struct {
     NanDataPathAppInfo app_info;
     /* Response Code indicating ACCEPT/REJECT/DEFER */
     NanDataPathResponseCode rsp_code;
-
     /* NAN Cipher Suite Type */
     u32 cipher_type;
-    /* pmk length */
-    u8 pmk_len;
-    /* PMK */
-    u8 pmk[NAN_PMK_INFO_LEN];
+    /*
+       Nan Security Key Info is optional in Discovery phase.
+       PMK or passphrase info can be passed during
+       the NDP session.
+    */
+    NanSecurityKeyInfo key_info;
+    /* length of service name */
+    u32 service_name_len;
+    /*
+       UTF-8 encoded string identifying the service name.
+       The service name field is only used if a Nan discovery
+       is not associated with the NDP (out-of-band discovery).
+    */
+    u8 service_name[NAN_MAX_SERVICE_NAME_LEN];
 } NanDataPathIndicationResponse;
 
 /* NDP termination info */
@@ -2025,7 +2206,11 @@ typedef struct {
     NanDataPathAppInfo app_info;
     /* Response code indicating ACCEPT/REJECT/DEFER */
     NanDataPathResponseCode rsp_code;
-    /* Reason code indicating the cause for REJECT */
+    /*
+      Reason code indicating the cause for REJECT.
+      NAN_STATUS_SUCCESS and NAN_STATUS_PROTOCOL_FAILURE are
+      expected reason codes.
+    */
     NanStatusType reason_code;
 } NanDataPathConfirmInd;
 
@@ -2043,11 +2228,37 @@ typedef struct {
     NanDataPathId ndp_instance_id[];
 } NanDataPathEndInd;
 
+/*
+  Event indicating Range Request received on the
+  Published side.
+*/
+typedef struct {
+    u16 publish_id;/* id is existing publish */
+    /* Range Requestor's MAC address */
+    u8 range_req_intf_addr[NAN_MAC_ADDR_LEN];
+} NanRangeRequestInd;
+
+/*
+  Event indicating Range report on the
+  Published side.
+*/
+typedef struct {
+    u16 publish_id;/* id is existing publish */
+    /* Range Requestor's MAC address */
+    u8 range_req_intf_addr[NAN_MAC_ADDR_LEN];
+    /*
+       Distance to the NAN device with the MAC address indicated
+       with ranged mac address.
+    */
+    u32 range_measurement_cm;
+} NanRangeReportInd;
+
 /* Response and Event Callbacks */
 typedef struct {
     /* NotifyResponse invoked to notify the status of the Request */
     void (*NotifyResponse)(transaction_id id, NanResponseMsg* rsp_data);
     /* Callbacks for various Events */
+    void (*EventPublishReplied)(NanPublishRepliedInd *event);
     void (*EventPublishTerminated)(NanPublishTerminatedInd* event);
     void (*EventMatch) (NanMatchInd* event);
     void (*EventMatchExpired) (NanMatchExpiredInd* event);
@@ -2061,6 +2272,8 @@ typedef struct {
     void (*EventDataConfirm)(NanDataPathConfirmInd* event);
     void (*EventDataEnd)(NanDataPathEndInd* event);
     void (*EventTransmitFollowup) (NanTransmitFollowupInd* event);
+    void (*EventRangeRequest) (NanRangeRequestInd* event);
+    void (*EventRangeReport) (NanRangeReportInd* event);
 } NanCallbackHandler;
 
 /**@brief nan_enable_request
@@ -2179,8 +2392,10 @@ wifi_error nan_subscribe_cancel_request(transaction_id id,
  *                      NAN_STATUS_INTERNAL_FAILURE
  *                      NAN_STATUS_INVALID_PUBLISH_SUBSCRIBE_ID
  *                      NAN_STATUS_INVALID_REQUESTOR_INSTANCE_ID
- * @return Asynchronous TransmitFollowupInd CB return
  *                      NAN_STATUS_FOLLOWUP_QUEUE_FULL
+ * @return Asynchronous TransmitFollowupInd CB return
+ *                      NAN_STATUS_SUCCESS
+ *                      NAN_STATUS_PROTOCOL_FAILURE
  *                      NAN_STATUS_NO_OTA_ACK
  */
 wifi_error nan_transmit_followup_request(transaction_id id,
