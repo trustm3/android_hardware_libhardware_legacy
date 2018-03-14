@@ -117,7 +117,12 @@ release_wake_lock(const char* id)
 
     if (g_error) return g_error;
 
-    ssize_t len = write(g_fds[RELEASE_WAKE_LOCK], id, strlen(id));
+    ssize_t len;
+
+    do {
+       len = write(g_fds[RELEASE_WAKE_LOCK], id, strlen(id));
+    } while (len < 0 && errno == EBUSY);
+
     if (len < 0) {
         return -errno;
     }
